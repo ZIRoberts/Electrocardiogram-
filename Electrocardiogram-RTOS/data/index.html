@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<!-- Using chart.min.js so things work even with no internet -->
+<head>
+    <script src='chart.min.js'></script>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+            font-family: Arial, sans-serif;
+        }
+        #ECG_SIGNAL {
+            width: 75vw !important;
+            height: 75vh !important;
+        }
+        #analysis {
+            font-size: 36px; /* Adjust as needed */
+            margin-top: 50px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id='ECG_SIGNAL'></canvas>
+    <div id='analysis'></div>
+    <script>
+        var ctx = document.getElementById('ECG_SIGNAL').getContext('2d');
+        var ECG_SIGNAL = new Chart(ctx, {
+            type: 'line', 
+            data: {
+                labels: [], 
+                datasets: [{
+                    label: 'ECG Signal', 
+                    data: [], 
+                    backgroundColor: 'rgba(139, 0, 0, 0.2)', 
+                    borderColor: 'rgba(139, 0, 0, 1)'
+                }]
+            },
+            options: {
+                scales: {
+                    y: {
+                        ticks: {
+                            font: {
+                                size: 20 // this changes the y-axis label size
+                            }
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        labels: {
+                            font: {
+                                size: 20 // this changes the legend label size
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        setInterval(function() {
+            fetch('/data').then(function(response) {
+                return response.text();
+            }).then(function(text) {
+                var data = JSON.parse(text);
+                console.log(data)
+                ECG_SIGNAL.data.labels.push('');
+                ECG_SIGNAL.data.datasets[0].data.push(data);
+                if (ECG_SIGNAL.data.labels.length > 1800) {
+                    ECG_SIGNAL.data.labels.shift();
+                    ECG_SIGNAL.data.datasets[0].data.shift();
+                }
+                ECG_SIGNAL.update();
+            });
+            fetch('/heartPrediction').then(function(response) {
+                return response.text();
+            }).then(function(analysis) {
+                document.getElementById('analysis').innerText = analysis;
+            });
+        }, 2.7777);
+    </script>
+</body>
+</html>
