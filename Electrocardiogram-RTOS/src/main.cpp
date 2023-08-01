@@ -1,24 +1,8 @@
-#include <Arduino.h>
-#include "FreeRTOS.h"
-#include "task.h"
-#include "queue.h"
-#include "semphr.h"
-#include "lwip/sockets.h"
-#include "lwip/sys.h"
-#include "lwip/api.h"
-#include <string.h>
-#include <WiFi.h>
 #include "FS.h"
-#include "SPIFFS.h"
-#include <iostream>
-#include <random>
-
-#define WEBSERVER_TASK_STACKSIZE (8192)
-#define HTTP_PORT 80
-#define MAX_CONN 5
+#include "config.h"
 
 // put function declarations here:
-void vWebServerTask(void *);
+void vWebServerTask(void*);
 int getData();
 void connectToWiFi();
 void createWifiNetwork();
@@ -27,91 +11,112 @@ void serveJS(int);
 const char* getHeartPrediction();
 
 static const int led_pin = LED_BUILTIN;
-static const BaseType_t app_cpu = 0; // use CPU 0
+static const BaseType_t wifi_cpu = 0;  // use CPU 0
+static const BaseType_t app_cpu = 1;   // use CPU 1
+
+ESP32AnalogRead senseECG;
+int ECGVoltage = 0;
+
+// Buffer defintion for EMG Sensor
+static std::deque<int> ecgBuffer;
 
 // Random Number 1 through 10
 std::random_device rd;
 std::mt19937 gen(rd());
 std::uniform_int_distribution<int> dis(1, 10);
 
+// TFT example data
+float ltx = 0;                  // Saved x coord of bottom of needle
+uint16_t osx = 120, osy = 120;  // Saved x & y coords
+uint32_t updateTime = 0;        // time for next update
+
+int old_analog = -999;   // Value last displayed
+int old_digital = -999;  // Value last displayed
+
+int value[6] = {0, 0, 0, 0, 0, 0};
+int old_value[6] = {-1, -1, -1, -1, -1, -1};
+int d = 0;
+
 int getData() {
-    // ECG DATA
-    int randomNumber = dis(gen);
-    return randomNumber;
+  // ECG DATA
+  int randomNumber = dis(gen);
+  return randomNumber;
 }
 
-const char* getHeartPrediction() {
-  return "Heart Status: Looking Good";
-}
+const char* getHeartPrediction() { return "Heart Status: Looking Good"; }
 
-void vWebServerTask(void *pvParameters)
-{
-    int tcp_socket, received_connection;
-    struct sockaddr_in addr;
-    char buffer[1024];
-                        
-    tcp_socket = lwip_socket(AF_INET, SOCK_STREAM, 0);
-    if(tcp_socket < 0) {
-        vTaskDelete(NULL);
-    }
+void vWebServerTask(void* pvParameters) {
+  int tcp_socket, received_connection;
+  struct sockaddr_in addr;
+  char buffer[1024];
 
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(HTTP_PORT);
-    addr.sin_addr.s_addr = INADDR_ANY;
+  tcp_socket = lwip_socket(AF_INET, SOCK_STREAM, 0);
+  if (tcp_socket < 0) {
+    vTaskDelete(NULL);
+  }
 
-    if(lwip_bind(tcp_socket, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        lwip_close(tcp_socket);
-        vTaskDelete(NULL);
-    }
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(HTTP_PORT);
+  addr.sin_addr.s_addr = INADDR_ANY;
 
-    // Begin Listening for connections. Can queue up MAX_CONN connections
-    if(lwip_listen(tcp_socket, MAX_CONN) < 0) {
-        lwip_close(tcp_socket);
-        vTaskDelete(NULL);
-    }
+  if (lwip_bind(tcp_socket, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+    lwip_close(tcp_socket);
+    vTaskDelete(NULL);
+  }
 
-    // Infinite loop to accept incoming connections
-    while(1) {
-        // Accept a connection on the socket
-        received_connection = lwip_accept(tcp_socket, NULL, NULL);
+  // Begin Listening for connections. Can queue up MAX_CONN connections
+  if (lwip_listen(tcp_socket, MAX_CONN) < 0) {
+    lwip_close(tcp_socket);
+    vTaskDelete(NULL);
+  }
 
-        // If a valid connection is established
-        if(received_connection > 0) {
-          // Clear the buffer
-          memset(buffer, 0, sizeof(buffer));
+  // Infinite loop to accept incoming connections
+  while (1) {
+    // Accept a connection on the socket
+    received_connection = lwip_accept(tcp_socket, NULL, NULL);
 
-          // Read the incoming request into the buffer (What is the request asking for, a specific page?)
-          lwip_read(received_connection, buffer, sizeof(buffer));
+    // If a valid connection is established
+    if (received_connection > 0) {
+      // Clear the buffer
+      memset(buffer, 0, sizeof(buffer));
 
-          // Checking if the request starts with "Get /data", if it does, it is from our javascript.
-          if(strstr(buffer, "GET /data ") == buffer) {
-              char data_response[64];
-              snprintf(data_response, sizeof(data_response), "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n%d", getData());
-              lwip_write(received_connection, data_response, strlen(data_response));
-          } 
-          else if(strstr(buffer, "GET /heartPrediction ") == buffer) {
-            char data_response[128];
-            snprintf(data_response, sizeof(data_response), "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n%s", getHeartPrediction());
-            lwip_write(received_connection, data_response, strlen(data_response));
-          }
-          else if(strstr(buffer, "GET /chart.min.js ") == buffer) {
-            Serial.println("Serving JavaScript");
-            char js_header[] = "HTTP/1.1 200 OK\r\nContent-Type: application/javascript\r\n\r\n";
-            lwip_write(received_connection, js_header, strlen(js_header));
-            serveJS(received_connection);
-          }
-          else {
-            Serial.println("Serving HTML");
-            char html_header[] = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n";
-            lwip_write(received_connection, html_header, strlen(html_header));
-            serveHTML(received_connection);
-          }
+      // Read the incoming request into the buffer (What is the request asking
+      // for, a specific page?)
+      lwip_read(received_connection, buffer, sizeof(buffer));
 
-          // Close the connection socket
-          lwip_close(received_connection);
+      // Checking if the request starts with "Get /data", if it does, it is from
+      // our javascript.
+      if (strstr(buffer, "GET /data ") == buffer) {
+        char data_response[64];
+        snprintf(data_response, sizeof(data_response),
+                 "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n%d",
+                 getData());
+        lwip_write(received_connection, data_response, strlen(data_response));
+      } else if (strstr(buffer, "GET /heartPrediction ") == buffer) {
+        char data_response[128];
+        snprintf(data_response, sizeof(data_response),
+                 "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n%s",
+                 getHeartPrediction());
+        lwip_write(received_connection, data_response, strlen(data_response));
+      } else if (strstr(buffer, "GET /chart.min.js ") == buffer) {
+        Serial.println("Serving JavaScript");
+        char js_header[] =
+            "HTTP/1.1 200 OK\r\nContent-Type: application/javascript\r\n\r\n";
+        lwip_write(received_connection, js_header, strlen(js_header));
+        serveJS(received_connection);
+      } else {
+        Serial.println("Serving HTML");
+        char html_header[] =
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n";
+        lwip_write(received_connection, html_header, strlen(html_header));
+        serveHTML(received_connection);
       }
+
+      // Close the connection socket
+      lwip_close(received_connection);
     }
+  }
 }
 
 // NOTE: The HTML file should be served in chunks like this
@@ -149,42 +154,45 @@ void serveJS(int received_connection) {
 
 void connectToWiFi() {
   // Leaking my network password :)
-  const char* ssid     = "NETGEAR46";         // Replace with your network SSID (name)
-  const char* password = "royalfinch897";     // Replace with your network password
+  const char* ssid = "NETGEAR46";  // Replace with your network SSID (name)
+  const char* password = "royalfinch897";  // Replace with your network password
 
-  vTaskDelay(1000 / portTICK_PERIOD_MS);    // Delay for a second
-  WiFi.begin(ssid, password);               // Connect to the network
+  vTaskDelay(1000 / portTICK_PERIOD_MS);  // Delay for a second
+  WiFi.begin(ssid, password);             // Connect to the network
 
-  while (WiFi.status() != WL_CONNECTED) {   // Wait for the Wi-Fi to connect
+  while (WiFi.status() != WL_CONNECTED) {  // Wait for the Wi-Fi to connect
     vTaskDelay(1000 / portTICK_PERIOD_MS);
     Serial.println("Connecting to WiFi...");
   }
 
   Serial.println("Connected to WiFi");
   Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());           // Print the IP address
+  Serial.println(WiFi.localIP());  // Print the IP address
 }
 
 void createWifiNetwork() {
-  const char* ssid     = "ESP32-ECG";   // The name of the Wi-Fi network that will be created
-  const char* password = NULL;           // The password for the Wi-Fi network
+  const char* ssid =
+      "ESP32-ECG";  // The name of the Wi-Fi network that will be created
+  const char* password = NULL;  // The password for the Wi-Fi network
 
-  WiFi.softAP(ssid, password);             // Create a Wi-Fi network
+  WiFi.softAP(ssid, password);  // Create a Wi-Fi network
 
   Serial.println("WiFi Access Point (AP) Created");
   Serial.print("IP address: ");
-  Serial.println(WiFi.softAPIP());         // Print the IP address
+  Serial.println(WiFi.softAPIP());  // Print the IP address
+  Serial.println("WiFi Port: ");
+  Serial.println(HTTP_PORT);  // Print the IP Port
 }
 
 // Verify that the HTML file can be accessed by SPIFFS.
 void verifyFileSPIFFS() {
-  if(!SPIFFS.begin(true)){
+  if (!SPIFFS.begin(true)) {
     Serial.println("An Error has occurred while mounting SPIFFS");
     return;
   }
 
   File file = SPIFFS.open("/index.html");
-  if(!file){
+  if (!file) {
     Serial.println("Failed to open file for reading");
     return;
   }
@@ -196,30 +204,87 @@ void verifyFileSPIFFS() {
   file.close();
 }
 
+/**
+ * @brief Updates the position of the servo motors based on the result of the
+ *        signal processing. Currently only a simple threshold comparision
+ *        is implemented.
+ *
+ * @param pvParameter Void Pointer
+ */
+void acquireECG(void* pvParameter) {
+  while (1) {
+    // Reads tge ECG signal
+    ECGVoltage = senseECG.readMilliVolts();
+
+    // Print output to serial
+    // Serial.println(ECGVoltage);
+
+    // Removes 1500 mV offset and oppends onto end of buffer
+    ECGVoltage -= 1500;
+    ecgBuffer.push_back(ECGVoltage);
+
+    // Checks if buffer is full and removes oldest data if necessary
+    if (ecgBuffer.size() >= MAX_BUFFER_SIZE) {
+      ecgBuffer.pop_front();
+    }
+
+    vTaskDelay(2.777 * portTICK_PERIOD_MS);
+  }
+}
+
+void updateLCD(void* pvParameter) {
+  while (1) {
+    vTaskDelay(35 * portTICK_PERIOD_MS);
+  }
+}
+
 void setup() {
-  // put your setup code here, to run once:
+  tft.init();
+  tft.setRotation(0);
   Serial.begin(115200);
-  while(!Serial);
+  while (!Serial)
+    ;
+  // Set CPU clock to 80MHz
+  setCpuFrequencyMhz(80);  // Can be set to 80, 160, or 240 MHZ
+  esp_log_level_set("*", ESP_LOG_DEBUG);
+  senseECG.attach(2);  // Set to 2,3, or 4 (need to short R15&R16 for GPIO 3&4)
 
   createWifiNetwork();
-  //connectToWiFi();
+  // connectToWiFi();
 
   // Verify that the HTML File(s) can be accessed.
   verifyFileSPIFFS();
 
+  TaskHandle_t xHandle = NULL;
   // Run Webserver
   xTaskCreatePinnedToCore(
-    vWebServerTask,
-    "Webserver",
-    WEBSERVER_TASK_STACKSIZE, // Stack Size to use (bytes in ESP32)
-    NULL, // parameter to pass to function
-    1, // Task Priority (0 to configMAX_PRIORITIES)
-    NULL, // Task Handle
-    app_cpu
-  );
+      vWebServerTask,            // Function to be called
+      "Webserver",               // Name of task
+      WEBSERVER_TASK_STACKSIZE,  // Stack Size to use (bytes in ESP32)
+      NULL,                      // parameter to pass to function
+      1,                         // Task Priority (0 to configMAX_PRIORITIES)
+      &xHandle,                  // Task Handle
+      wifi_cpu);                 // Run on core 0
+
+  xTaskCreatePinnedToCore(   // Use xTaskCreate() in vanilla FreeRTOS
+      acquireECG,            // Function to be called
+      "Acquire ECG Signal",  // Name of task
+      2048,                  // Stack size (bytes in ESP32, words in FreeRTOS)
+      NULL,                  // Parameter to pass to function
+      0,                     // Task priority (0 to configMAX_PRIORITIES - 1)
+      &xHandle,              // Task handle
+      app_cpu);              // Run on core 1
+
+  xTaskCreatePinnedToCore(   // Use xTaskCreate() in vanilla FreeRTOS
+      updateLCD,             // Function to be called
+      "Update LCD Display",  // Name of task
+      4096,                  // Stack size (bytes in ESP32, words in FreeRTOS)
+      NULL,                  // Parameter to pass to function
+      0,                     // Task priority (0 to configMAX_PRIORITIES - 1)
+      &xHandle,              // Task handle
+      app_cpu);              // Run on core 1
 }
 
 void loop() {
   // put your main code here, to run repeatedly:
-
 }
