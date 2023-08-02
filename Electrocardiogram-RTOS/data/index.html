@@ -63,14 +63,17 @@
         });
         setInterval(function() {
             fetch('/data').then(function(response) {
-                return response.text();
-            }).then(function(text) {
-                var data = JSON.parse(text);
+                return response.json();
+            }).then(function(data) {
                 console.log(data)
-                ECG_SIGNAL.data.labels.push('');
-                ECG_SIGNAL.data.datasets[0].data.push(data);
-                if (ECG_SIGNAL.data.labels.length > 1800) {
-                    ECG_SIGNAL.data.labels.shift();
+                // Assume that data is now an array of numbers
+                for (var i = 0; i < data.length; i++) {
+                    //ECG_SIGNAL.data.labels.push('');
+                    ECG_SIGNAL.data.datasets[0].data.push(data[i]);
+                }
+                // Trim old data if there's too much
+                while (ECG_SIGNAL.data.labels.length > 1800) {
+                    //ECG_SIGNAL.data.labels.shift();
                     ECG_SIGNAL.data.datasets[0].data.shift();
                 }
                 ECG_SIGNAL.update();
@@ -80,7 +83,7 @@
             }).then(function(analysis) {
                 document.getElementById('analysis').innerText = analysis;
             });
-        }, 2.7777);
+        }, 2.7777 * 60);
     </script>
 </body>
 </html>

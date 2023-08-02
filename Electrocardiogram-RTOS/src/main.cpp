@@ -9,6 +9,8 @@ void createWifiNetwork();
 void serveHTML(int);
 void serveJS(int);
 const char* getHeartPrediction();
+std::vector<int> getEcgWebGraphData();
+
 
 static const int led_pin = LED_BUILTIN;
 static const BaseType_t wifi_cpu = 0;  // use CPU 0
@@ -19,6 +21,7 @@ int ECGVoltage = 0;
 
 // Buffer defintion for EMG Sensor
 static std::deque<int> ecgBuffer;
+static std::deque<int> ecgTrashBuffer;
 
 // Random Number 1 through 10
 std::random_device rd;
@@ -36,6 +39,21 @@ int old_digital = -999;  // Value last displayed
 int value[6] = {0, 0, 0, 0, 0, 0};
 int old_value[6] = {-1, -1, -1, -1, -1, -1};
 int d = 0;
+
+std::vector<int> getEcgWebGraphData() {
+  std::vector<int> ecgWebGraphData;
+
+  // Copy the last 60 elements from the deque into the vector
+  int numDatapoints = std::min(static_cast<int>(ecgBuffer.size()), 60);
+  std::deque<int>::reverse_iterator rit = ecgBuffer.rbegin();
+
+  for (int i = 0; i < numDatapoints; ++i) {
+      ecgWebGraphData.insert(ecgWebGraphData.begin(), *rit);
+      ++rit;
+  }
+  
+  return ecgWebGraphData;
+}
 
 int getData() {
   // ECG DATA
@@ -88,11 +106,27 @@ void vWebServerTask(void* pvParameters) {
       // Checking if the request starts with "Get /data", if it does, it is from
       // our javascript.
       if (strstr(buffer, "GET /data ") == buffer) {
-        char data_response[64];
-        snprintf(data_response, sizeof(data_response),
-                 "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n%d",
-                 getData());
+        std::vector<int> ecgData = getEcgWebGraphData();
+
+        std::string jsonResponse = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n[";
+
+        for (size_t i = 0; i < ecgData.size(); ++i) {
+            if (i != 0) jsonResponse += ',';
+            jsonResponse += std::to_string(ecgData[i]);
+        }
+
+        jsonResponse += "]";
+
+        const char *data_response = jsonResponse.c_str();
+
         lwip_write(received_connection, data_response, strlen(data_response));
+
+        // char data_response[128];
+        // snprintf(data_response, sizeof(data_response),
+        //          "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n%d",
+        //          getEcgWebGraphData());
+        // lwip_write(received_connection, data_response, strlen(data_response));
+
       } else if (strstr(buffer, "GET /heartPrediction ") == buffer) {
         char data_response[128];
         snprintf(data_response, sizeof(data_response),
@@ -220,13 +254,25 @@ void acquireECG(void* pvParameter) {
     // Serial.println(ECGVoltage);
 
     // Removes 1500 mV offset and oppends onto end of buffer
+    // Newest signal will be at end of buffer, oldest will be at start
     ECGVoltage -= 1500;
     ecgBuffer.push_back(ECGVoltage);
+
+    // *** FOR TESTING ***
+    int randomNumber = dis(gen);
+    ecgTrashBuffer.push_back(randomNumber);
+    if (ecgTrashBuffer.size() >= MAX_BUFFER_SIZE) {
+      ecgTrashBuffer.pop_front();
+    }
+    Serial.println("Trash Buffer");
+
+    // *** END TESTING *** 
 
     // Checks if buffer is full and removes oldest data if necessary
     if (ecgBuffer.size() >= MAX_BUFFER_SIZE) {
       ecgBuffer.pop_front();
     }
+
 
     vTaskDelay(2.777 * portTICK_PERIOD_MS);
   }
