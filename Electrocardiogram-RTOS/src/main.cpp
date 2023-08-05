@@ -30,7 +30,7 @@ char currentAiPrediction[256] = "Unknown";
 // Random Number 1 through 10
 std::random_device rd;
 std::mt19937 gen(rd());
-std::uniform_int_distribution<int> dis(1, 20);
+std::uniform_int_distribution<int> dis(1, 5);
 
 // TFT example data
 float ltx = 0;                  // Saved x coord of bottom of needle
