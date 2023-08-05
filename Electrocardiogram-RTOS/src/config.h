@@ -8,6 +8,7 @@
 #include <deque>
 #include <iostream>
 #include <random>
+#include <cmath> // for std::sin and M_PI
 
 #include "../lib/ESP32AnalogRead/ESP32AnalogRead.h"
 #include "FreeRTOS.h"

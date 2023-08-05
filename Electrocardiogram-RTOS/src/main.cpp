@@ -3,13 +3,14 @@
 
 // put function declarations here:
 void vWebServerTask(void*);
-int getData();
 void connectToWiFi();
 void createWifiNetwork();
 void serveHTML(int);
 void serveJS(int);
-const char* getHeartPrediction();
-std::vector<int> getEcgWebGraphData();
+void serveFile(int, char*);
+char* getHeartPrediction();
+std::vector<double> getEcgWebGraphData();
+std::vector<double> getAiInferenceData();
 
 
 static const int led_pin = LED_BUILTIN;
@@ -20,13 +21,16 @@ ESP32AnalogRead senseECG;
 int ECGVoltage = 0;
 
 // Buffer defintion for EMG Sensor
-static std::deque<int> ecgBuffer;
-static std::deque<int> ecgTrashBuffer;
+static std::deque<double> ecgBuffer;
+static std::deque<double> ecgTrashBuffer;
+
+// Global string variable
+char currentAiPrediction[256] = "Unknown";
 
 // Random Number 1 through 10
 std::random_device rd;
 std::mt19937 gen(rd());
-std::uniform_int_distribution<int> dis(1, 10);
+std::uniform_int_distribution<int> dis(1, 20);
 
 // TFT example data
 float ltx = 0;                  // Saved x coord of bottom of needle
@@ -40,12 +44,48 @@ int value[6] = {0, 0, 0, 0, 0, 0};
 int old_value[6] = {-1, -1, -1, -1, -1, -1};
 int d = 0;
 
-std::vector<int> getEcgWebGraphData() {
-  std::vector<int> ecgWebGraphData;
+std::vector<double> getEcgWebGraphData() {
+  std::vector<double> ecgWebGraphData;
 
-  // Copy the last 60 elements from the deque into the vector
-  int numDatapoints = std::min(static_cast<int>(ecgBuffer.size()), 60);
-  std::deque<int>::reverse_iterator rit = ecgBuffer.rbegin();
+  // FOR TRASH ECG BUFFER
+  // Frequency of the sine wave
+  double frequency = 2.0;
+
+  // Increment
+  double increment = 2.0 * M_PI * frequency / MAX_BUFFER_SIZE;
+
+  // Current angle
+  double angle = 0.0;
+
+  for (int i = 0; i < 180; ++i) {
+      // Compute the next value
+      double value = std::sin(angle);
+
+      // Scale the value to be within the range you need, if necessary
+      // E.g., to scale to the range 0-100, use:
+      // value = (value + 1.0) / 2.0 * 100.0;
+
+      // Add it to the buffer
+      ecgTrashBuffer.push_back(value);
+
+      if (ecgTrashBuffer.size() >= MAX_BUFFER_SIZE) {
+          ecgTrashBuffer.pop_front();
+      }
+
+      // Increment the angle
+      angle += increment * dis(gen);
+
+      // Wrap the angle to 2*pi, if necessary
+      if (angle >= 2.0 * M_PI) {
+          angle -= 2.0 * M_PI;
+      }
+  }
+
+  // Copy the last 180 elements from the deque into the vector
+  // Using std::min here will either use the ecgBuffer size, if it does
+  // not contain 180 datapoints, or it will use 180, if it contains more than 180.
+  int numDatapoints = std::min(static_cast<int>(ecgTrashBuffer.size()), 180);
+  std::deque<double>::reverse_iterator rit = ecgTrashBuffer.rbegin();
 
   for (int i = 0; i < numDatapoints; ++i) {
       ecgWebGraphData.insert(ecgWebGraphData.begin(), *rit);
@@ -55,13 +95,24 @@ std::vector<int> getEcgWebGraphData() {
   return ecgWebGraphData;
 }
 
-int getData() {
-  // ECG DATA
-  int randomNumber = dis(gen);
-  return randomNumber;
+std::vector<double> getAiInferenceData() {
+  std::vector<double> AiInferenceData;
+
+  // Copy the last 1800 elements from the deque into the vector
+  // Using std::min here will either use the ecgBuffer size, if it does
+  // not contain 1800 datapoints, or it will use 1800, if it contains more than 1800.
+  int numDatapoints = std::min(static_cast<int>(ecgTrashBuffer.size()), 1800);
+  std::deque<double>::reverse_iterator rit = ecgTrashBuffer.rbegin();
+
+  for (int i = 0; i < numDatapoints; ++i) {
+      AiInferenceData.insert(AiInferenceData.begin(), *rit);
+      ++rit;
+  }
+  
+  return AiInferenceData;
 }
 
-const char* getHeartPrediction() { return "Heart Status: Looking Good"; }
+char* getHeartPrediction() { return currentAiPrediction; }
 
 void vWebServerTask(void* pvParameters) {
   int tcp_socket, received_connection;
@@ -106,7 +157,7 @@ void vWebServerTask(void* pvParameters) {
       // Checking if the request starts with "Get /data", if it does, it is from
       // our javascript.
       if (strstr(buffer, "GET /data ") == buffer) {
-        std::vector<int> ecgData = getEcgWebGraphData();
+        std::vector<double> ecgData = getEcgWebGraphData();
 
         std::string jsonResponse = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n[";
 
@@ -121,11 +172,39 @@ void vWebServerTask(void* pvParameters) {
 
         lwip_write(received_connection, data_response, strlen(data_response));
 
-        // char data_response[128];
-        // snprintf(data_response, sizeof(data_response),
-        //          "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n%d",
-        //          getEcgWebGraphData());
-        // lwip_write(received_connection, data_response, strlen(data_response));
+      } else if (strstr(buffer, "GET /inferenceData ") == buffer) {
+        Serial.println("Giving Inference Data");
+        std::vector<double> ecgData = getAiInferenceData();
+        std::string jsonResponse = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n[";
+
+        for (size_t i = 0; i < ecgData.size(); ++i) {
+            if (i != 0) jsonResponse += ',';
+            jsonResponse += std::to_string(ecgData[i]);
+        }
+
+        jsonResponse += "]";
+
+        const char *data_response = jsonResponse.c_str();
+
+        lwip_write(received_connection, data_response, strlen(data_response));
+
+      } else if (strstr(buffer, "POST /setAiPrediction ") == buffer) {
+        Serial.println("Setting AI Prediction");
+        
+        // Locate the start of the POST body data
+        char* post_data_start = strstr(buffer, "\r\n\r\n");
+        if (post_data_start != nullptr) {
+            // Move the pointer past the "\r\n\r\n"
+            post_data_start += 4;
+
+            // Start with the static empty string
+            strcpy(currentAiPrediction, "");
+
+            // Append the POST body data
+            strncat(currentAiPrediction, post_data_start, sizeof(currentAiPrediction) - strlen(currentAiPrediction) - 1);
+        }
+        const char *response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nSuccess";
+        lwip_write(received_connection, response, strlen(response));
 
       } else if (strstr(buffer, "GET /heartPrediction ") == buffer) {
         char data_response[128];
@@ -139,6 +218,20 @@ void vWebServerTask(void* pvParameters) {
             "HTTP/1.1 200 OK\r\nContent-Type: application/javascript\r\n\r\n";
         lwip_write(received_connection, js_header, strlen(js_header));
         serveJS(received_connection);
+      } else if (strstr(buffer, "GET /meme_1.png ") == buffer) {
+        Serial.println("Serving Meme 1");
+        char filename[] = "/meme_1.png";
+        char js_header[] =
+            "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\n\r\n";
+        lwip_write(received_connection, js_header, strlen(js_header));
+        serveFile(received_connection, filename);
+      } else if (strstr(buffer, "GET /meme_2.png ") == buffer) {
+        Serial.println("Serving Meme 2");
+        char filename[] = "/meme_2.png";
+        char js_header[] =
+            "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\n\r\n";
+        lwip_write(received_connection, js_header, strlen(js_header));
+        serveFile(received_connection, filename);
       } else {
         Serial.println("Serving HTML");
         char html_header[] =
@@ -176,6 +269,21 @@ void serveJS(int received_connection) {
   if (file) {
     while (file.available()) {
       char line[256];
+      int i = 0;
+      while (file.available() && i < sizeof(line)) {
+        line[i++] = file.read();
+      }
+      lwip_write(received_connection, line, i);
+    }
+    file.close();
+  }
+}
+
+void serveFile(int received_connection, char* filename) {
+  File file = SPIFFS.open(filename);
+  if (file) {
+    while (file.available()) {
+      char line[2048];
       int i = 0;
       while (file.available() && i < sizeof(line)) {
         line[i++] = file.read();
@@ -259,13 +367,12 @@ void acquireECG(void* pvParameter) {
     ecgBuffer.push_back(ECGVoltage);
 
     // *** FOR TESTING ***
-    int randomNumber = dis(gen);
-    ecgTrashBuffer.push_back(randomNumber);
-    if (ecgTrashBuffer.size() >= MAX_BUFFER_SIZE) {
-      ecgTrashBuffer.pop_front();
-    }
-    Serial.println("Trash Buffer");
-
+    // int randomNumber = dis(gen);
+    // ecgTrashBuffer.push_back(randomNumber);
+    // if (ecgTrashBuffer.size() >= MAX_BUFFER_SIZE) {
+    //   ecgTrashBuffer.pop_front();
+    // }
+    // Serial.println("Trash Buffer");
     // *** END TESTING *** 
 
     // Checks if buffer is full and removes oldest data if necessary
