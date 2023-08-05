@@ -47,45 +47,11 @@ int d = 0;
 std::vector<double> getEcgWebGraphData() {
   std::vector<double> ecgWebGraphData;
 
-  // FOR TRASH ECG BUFFER
-  // Frequency of the sine wave
-  double frequency = 2.0;
-
-  // Increment
-  double increment = 2.0 * M_PI * frequency / MAX_BUFFER_SIZE;
-
-  // Current angle
-  double angle = 0.0;
-
-  for (int i = 0; i < 180; ++i) {
-      // Compute the next value
-      double value = std::sin(angle);
-
-      // Scale the value to be within the range you need, if necessary
-      // E.g., to scale to the range 0-100, use:
-      // value = (value + 1.0) / 2.0 * 100.0;
-
-      // Add it to the buffer
-      ecgTrashBuffer.push_back(value);
-
-      if (ecgTrashBuffer.size() >= MAX_BUFFER_SIZE) {
-          ecgTrashBuffer.pop_front();
-      }
-
-      // Increment the angle
-      angle += increment * dis(gen);
-
-      // Wrap the angle to 2*pi, if necessary
-      if (angle >= 2.0 * M_PI) {
-          angle -= 2.0 * M_PI;
-      }
-  }
-
   // Copy the last 180 elements from the deque into the vector
   // Using std::min here will either use the ecgBuffer size, if it does
   // not contain 180 datapoints, or it will use 180, if it contains more than 180.
-  int numDatapoints = std::min(static_cast<int>(ecgTrashBuffer.size()), 180);
-  std::deque<double>::reverse_iterator rit = ecgTrashBuffer.rbegin();
+  int numDatapoints = std::min(static_cast<int>(ecgBuffer.size()), 180);
+  std::deque<double>::reverse_iterator rit = ecgBuffer.rbegin();
 
   for (int i = 0; i < numDatapoints; ++i) {
       ecgWebGraphData.insert(ecgWebGraphData.begin(), *rit);
@@ -354,7 +320,17 @@ void verifyFileSPIFFS() {
  * @param pvParameter Void Pointer
  */
 void acquireECG(void* pvParameter) {
+  // FOR TRASH ECG BUFFER TESTING
+  // Frequency of the sine wave
+  double frequency = 2.0;
+  // Increment
+  double increment = 2.0 * M_PI * frequency / MAX_BUFFER_SIZE;
+  // Current angle
+  double angle = 0.0;
+  // END OF TESTING
+
   while (1) {
+    //Serial.println("Looping in acquire ECG");
     // Reads tge ECG signal
     ECGVoltage = senseECG.readMilliVolts();
 
@@ -365,21 +341,30 @@ void acquireECG(void* pvParameter) {
     // Newest signal will be at end of buffer, oldest will be at start
     ECGVoltage -= 1500;
     ecgBuffer.push_back(ECGVoltage);
-
-    // *** FOR TESTING ***
-    // int randomNumber = dis(gen);
-    // ecgTrashBuffer.push_back(randomNumber);
-    // if (ecgTrashBuffer.size() >= MAX_BUFFER_SIZE) {
-    //   ecgTrashBuffer.pop_front();
-    // }
-    // Serial.println("Trash Buffer");
-    // *** END TESTING *** 
-
     // Checks if buffer is full and removes oldest data if necessary
     if (ecgBuffer.size() >= MAX_BUFFER_SIZE) {
       ecgBuffer.pop_front();
     }
 
+    // *** FOR TESTING ***
+
+    // Compute the next value
+    double value = std::sin(angle);
+    // Increment the angle
+    angle += increment * dis(gen);
+    // Wrap the angle to 2*pi, if necessary
+    if (angle >= 2.0 * M_PI) {
+        angle -= 2.0 * M_PI;
+    }
+
+    // Add it to the buffer
+    ecgTrashBuffer.push_back(value);
+
+    if (ecgTrashBuffer.size() >= MAX_BUFFER_SIZE) {
+        ecgTrashBuffer.pop_front();
+    }
+
+    // *** END OF TESTING *** 
 
     vTaskDelay(2.777 * portTICK_PERIOD_MS);
   }
@@ -395,8 +380,7 @@ void setup() {
   tft.init();
   tft.setRotation(0);
   Serial.begin(115200);
-  while (!Serial)
-    ;
+  while (!Serial);
   // Set CPU clock to 80MHz
   setCpuFrequencyMhz(80);  // Can be set to 80, 160, or 240 MHZ
   esp_log_level_set("*", ESP_LOG_DEBUG);
@@ -408,34 +392,36 @@ void setup() {
   // Verify that the HTML File(s) can be accessed.
   verifyFileSPIFFS();
 
-  TaskHandle_t xHandle = NULL;
-  // Run Webserver
+  TaskHandle_t acquireECGTaskHandle = NULL;
+  TaskHandle_t updateLCDTaskHandle = NULL;
+  TaskHandle_t webServerTaskHandle = NULL;
+
+  xTaskCreatePinnedToCore(   // Use xTaskCreate() in vanilla FreeRTOS
+    acquireECG,            // Function to be called
+    "Acquire ECG Signal",  // Name of task
+    2048,                  // Stack size (bytes in ESP32, words in FreeRTOS)
+    NULL,                  // Parameter to pass to function
+    5,                     // Task priority (0 to configMAX_PRIORITIES - 1)
+    &acquireECGTaskHandle,              // Task handle
+    1);              // Run on core 1
+
+  xTaskCreatePinnedToCore(   // Use xTaskCreate() in vanilla FreeRTOS
+    updateLCD,             // Function to be called
+    "Update LCD Display",  // Name of task
+    4096,                  // Stack size (bytes in ESP32, words in FreeRTOS)
+    NULL,                  // Parameter to pass to function
+    0,                     // Task priority (0 to configMAX_PRIORITIES - 1)
+    &updateLCDTaskHandle,              // Task handle
+    1);              // Run on core 1
+  
   xTaskCreatePinnedToCore(
-      vWebServerTask,            // Function to be called
-      "Webserver",               // Name of task
-      WEBSERVER_TASK_STACKSIZE,  // Stack Size to use (bytes in ESP32)
-      NULL,                      // parameter to pass to function
-      1,                         // Task Priority (0 to configMAX_PRIORITIES)
-      &xHandle,                  // Task Handle
-      wifi_cpu);                 // Run on core 0
-
-  xTaskCreatePinnedToCore(   // Use xTaskCreate() in vanilla FreeRTOS
-      acquireECG,            // Function to be called
-      "Acquire ECG Signal",  // Name of task
-      2048,                  // Stack size (bytes in ESP32, words in FreeRTOS)
-      NULL,                  // Parameter to pass to function
-      0,                     // Task priority (0 to configMAX_PRIORITIES - 1)
-      &xHandle,              // Task handle
-      app_cpu);              // Run on core 1
-
-  xTaskCreatePinnedToCore(   // Use xTaskCreate() in vanilla FreeRTOS
-      updateLCD,             // Function to be called
-      "Update LCD Display",  // Name of task
-      4096,                  // Stack size (bytes in ESP32, words in FreeRTOS)
-      NULL,                  // Parameter to pass to function
-      0,                     // Task priority (0 to configMAX_PRIORITIES - 1)
-      &xHandle,              // Task handle
-      app_cpu);              // Run on core 1
+    vWebServerTask,            // Function to be called
+    "Webserver",               // Name of task
+    WEBSERVER_TASK_STACKSIZE,  // Stack Size to use (bytes in ESP32)
+    NULL,                      // parameter to pass to function
+    1,                         // Task Priority (0 to configMAX_PRIORITIES)
+    &webServerTaskHandle,                  // Task Handle
+    0);                 // Run on core 0
 }
 
 void loop() {
