@@ -12,7 +12,6 @@ char* getHeartPrediction();
 std::vector<double> getEcgWebGraphData();
 std::vector<double> getAiInferenceData();
 
-
 static const int led_pin = LED_BUILTIN;
 static const BaseType_t wifi_cpu = 0;  // use CPU 0
 static const BaseType_t app_cpu = 1;   // use CPU 1
@@ -49,15 +48,16 @@ std::vector<double> getEcgWebGraphData() {
 
   // Copy the last 180 elements from the deque into the vector
   // Using std::min here will either use the ecgBuffer size, if it does
-  // not contain 180 datapoints, or it will use 180, if it contains more than 180.
+  // not contain 180 datapoints, or it will use 180, if it contains more than
+  // 180.
   int numDatapoints = std::min(static_cast<int>(ecgBuffer.size()), 180);
   std::deque<double>::reverse_iterator rit = ecgBuffer.rbegin();
 
   for (int i = 0; i < numDatapoints; ++i) {
-      ecgWebGraphData.insert(ecgWebGraphData.begin(), *rit);
-      ++rit;
+    ecgWebGraphData.insert(ecgWebGraphData.begin(), *rit);
+    ++rit;
   }
-  
+
   return ecgWebGraphData;
 }
 
@@ -66,15 +66,16 @@ std::vector<double> getAiInferenceData() {
 
   // Copy the last 1800 elements from the deque into the vector
   // Using std::min here will either use the ecgBuffer size, if it does
-  // not contain 1800 datapoints, or it will use 1800, if it contains more than 1800.
+  // not contain 1800 datapoints, or it will use 1800, if it contains more than
+  // 1800.
   int numDatapoints = std::min(static_cast<int>(ecgTrashBuffer.size()), 1800);
   std::deque<double>::reverse_iterator rit = ecgTrashBuffer.rbegin();
 
   for (int i = 0; i < numDatapoints; ++i) {
-      AiInferenceData.insert(AiInferenceData.begin(), *rit);
-      ++rit;
+    AiInferenceData.insert(AiInferenceData.begin(), *rit);
+    ++rit;
   }
-  
+
   return AiInferenceData;
 }
 
@@ -125,51 +126,56 @@ void vWebServerTask(void* pvParameters) {
       if (strstr(buffer, "GET /data ") == buffer) {
         std::vector<double> ecgData = getEcgWebGraphData();
 
-        std::string jsonResponse = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n[";
+        std::string jsonResponse =
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n[";
 
         for (size_t i = 0; i < ecgData.size(); ++i) {
-            if (i != 0) jsonResponse += ',';
-            jsonResponse += std::to_string(ecgData[i]);
+          if (i != 0) jsonResponse += ',';
+          jsonResponse += std::to_string(ecgData[i]);
         }
 
         jsonResponse += "]";
 
-        const char *data_response = jsonResponse.c_str();
+        const char* data_response = jsonResponse.c_str();
 
         lwip_write(received_connection, data_response, strlen(data_response));
 
       } else if (strstr(buffer, "GET /inferenceData ") == buffer) {
         Serial.println("Giving Inference Data");
         std::vector<double> ecgData = getAiInferenceData();
-        std::string jsonResponse = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n[";
+        std::string jsonResponse =
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n[";
 
         for (size_t i = 0; i < ecgData.size(); ++i) {
-            if (i != 0) jsonResponse += ',';
-            jsonResponse += std::to_string(ecgData[i]);
+          if (i != 0) jsonResponse += ',';
+          jsonResponse += std::to_string(ecgData[i]);
         }
 
         jsonResponse += "]";
 
-        const char *data_response = jsonResponse.c_str();
+        const char* data_response = jsonResponse.c_str();
 
         lwip_write(received_connection, data_response, strlen(data_response));
 
       } else if (strstr(buffer, "POST /setAiPrediction ") == buffer) {
         Serial.println("Setting AI Prediction");
-        
+
         // Locate the start of the POST body data
         char* post_data_start = strstr(buffer, "\r\n\r\n");
         if (post_data_start != nullptr) {
-            // Move the pointer past the "\r\n\r\n"
-            post_data_start += 4;
+          // Move the pointer past the "\r\n\r\n"
+          post_data_start += 4;
 
-            // Start with the static empty string
-            strcpy(currentAiPrediction, "");
+          // Start with the static empty string
+          strcpy(currentAiPrediction, "");
 
-            // Append the POST body data
-            strncat(currentAiPrediction, post_data_start, sizeof(currentAiPrediction) - strlen(currentAiPrediction) - 1);
+          // Append the POST body data
+          strncat(
+              currentAiPrediction, post_data_start,
+              sizeof(currentAiPrediction) - strlen(currentAiPrediction) - 1);
         }
-        const char *response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nSuccess";
+        const char* response =
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nSuccess";
         lwip_write(received_connection, response, strlen(response));
 
       } else if (strstr(buffer, "GET /heartPrediction ") == buffer) {
@@ -187,15 +193,13 @@ void vWebServerTask(void* pvParameters) {
       } else if (strstr(buffer, "GET /meme_1.png ") == buffer) {
         Serial.println("Serving Meme 1");
         char filename[] = "/meme_1.png";
-        char js_header[] =
-            "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\n\r\n";
+        char js_header[] = "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\n\r\n";
         lwip_write(received_connection, js_header, strlen(js_header));
         serveFile(received_connection, filename);
       } else if (strstr(buffer, "GET /meme_2.png ") == buffer) {
         Serial.println("Serving Meme 2");
         char filename[] = "/meme_2.png";
-        char js_header[] =
-            "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\n\r\n";
+        char js_header[] = "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\n\r\n";
         lwip_write(received_connection, js_header, strlen(js_header));
         serveFile(received_connection, filename);
       } else {
@@ -330,8 +334,8 @@ void acquireECG(void* pvParameter) {
   // END OF TESTING
 
   while (1) {
-    //Serial.println("Looping in acquire ECG");
-    // Reads tge ECG signal
+    // Serial.println("Looping in acquire ECG");
+    //  Reads tge ECG signal
     ECGVoltage = senseECG.readMilliVolts();
 
     // Print output to serial
@@ -354,17 +358,17 @@ void acquireECG(void* pvParameter) {
     angle += increment * dis(gen);
     // Wrap the angle to 2*pi, if necessary
     if (angle >= 2.0 * M_PI) {
-        angle -= 2.0 * M_PI;
+      angle -= 2.0 * M_PI;
     }
 
     // Add it to the buffer
     ecgTrashBuffer.push_back(value);
 
     if (ecgTrashBuffer.size() >= MAX_BUFFER_SIZE) {
-        ecgTrashBuffer.pop_front();
+      ecgTrashBuffer.pop_front();
     }
 
-    // *** END OF TESTING *** 
+    // *** END OF TESTING ***
 
     vTaskDelay(2.777 * portTICK_PERIOD_MS);
   }
@@ -380,7 +384,8 @@ void setup() {
   tft.init();
   tft.setRotation(0);
   Serial.begin(115200);
-  while (!Serial);
+  while (!Serial)
+    ;
   // Set CPU clock to 80MHz
   setCpuFrequencyMhz(80);  // Can be set to 80, 160, or 240 MHZ
   esp_log_level_set("*", ESP_LOG_DEBUG);
@@ -396,32 +401,32 @@ void setup() {
   TaskHandle_t updateLCDTaskHandle = NULL;
   TaskHandle_t webServerTaskHandle = NULL;
 
-  xTaskCreatePinnedToCore(   // Use xTaskCreate() in vanilla FreeRTOS
-    acquireECG,            // Function to be called
-    "Acquire ECG Signal",  // Name of task
-    2048,                  // Stack size (bytes in ESP32, words in FreeRTOS)
-    NULL,                  // Parameter to pass to function
-    5,                     // Task priority (0 to configMAX_PRIORITIES - 1)
-    &acquireECGTaskHandle,              // Task handle
-    1);              // Run on core 1
+  xTaskCreatePinnedToCore(    // Use xTaskCreate() in vanilla FreeRTOS
+      acquireECG,             // Function to be called
+      "Acquire ECG Signal",   // Name of task
+      2048,                   // Stack size (bytes in ESP32, words in FreeRTOS)
+      NULL,                   // Parameter to pass to function
+      5,                      // Task priority (0 to configMAX_PRIORITIES - 1)
+      &acquireECGTaskHandle,  // Task handle
+      1);                     // Run on core 1
 
   xTaskCreatePinnedToCore(   // Use xTaskCreate() in vanilla FreeRTOS
-    updateLCD,             // Function to be called
-    "Update LCD Display",  // Name of task
-    4096,                  // Stack size (bytes in ESP32, words in FreeRTOS)
-    NULL,                  // Parameter to pass to function
-    0,                     // Task priority (0 to configMAX_PRIORITIES - 1)
-    &updateLCDTaskHandle,              // Task handle
-    1);              // Run on core 1
-  
+      updateLCD,             // Function to be called
+      "Update LCD Display",  // Name of task
+      4096,                  // Stack size (bytes in ESP32, words in FreeRTOS)
+      NULL,                  // Parameter to pass to function
+      0,                     // Task priority (0 to configMAX_PRIORITIES - 1)
+      &updateLCDTaskHandle,  // Task handle
+      1);                    // Run on core 1
+
   xTaskCreatePinnedToCore(
-    vWebServerTask,            // Function to be called
-    "Webserver",               // Name of task
-    WEBSERVER_TASK_STACKSIZE,  // Stack Size to use (bytes in ESP32)
-    NULL,                      // parameter to pass to function
-    1,                         // Task Priority (0 to configMAX_PRIORITIES)
-    &webServerTaskHandle,                  // Task Handle
-    0);                 // Run on core 0
+      vWebServerTask,            // Function to be called
+      "Webserver",               // Name of task
+      WEBSERVER_TASK_STACKSIZE,  // Stack Size to use (bytes in ESP32)
+      NULL,                      // parameter to pass to function
+      1,                         // Task Priority (0 to configMAX_PRIORITIES)
+      &webServerTaskHandle,      // Task Handle
+      0);                        // Run on core 0
 }
 
 void loop() {
