@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html>
+<!-- Using chart.min.js so things work even with no internet -->
+<head>
+    <script src='chart.min.js'></script>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+            font-family: Arial, sans-serif;
+        }
+        .wrapper {
+            display: flex;
+            justify-content: space-around; /* This will evenly space the items in the wrapper */
+            align-items: center; /* This will align the items vertically */
+            width: 100vw;
+            height: 75vh;
+        }
+        #image-left, #image-right {
+            width: 150px; /* Sets the image width */
+            height: auto; /* Keep the aspect ratio */
+            max-width: 100%; /* This will make the image responsive */
+        }
+        #ECG_SIGNAL {
+            width: 75vw !important;
+            height: 75vh !important;
+        }
+        #analysis {
+            font-size: 36px; /* Adjust as needed */
+            margin-top: 50px;
+        }
+    </style>
+</head>
+<body>
+    <div class="wrapper">
+        <img id="image-left" src="meme_1.png" alt="Image Left">
+        <canvas id='ECG_SIGNAL'></canvas>
+        <img id="image-right" src="meme_2.png" alt="Image Right">
+    </div>
+    <div id='analysis'></div>
+    <script>
+        var ctx = document.getElementById('ECG_SIGNAL').getContext('2d');
+        var ECG_SIGNAL = new Chart(ctx, {
+            type: 'line', 
+            data: {
+                labels: [], 
+                datasets: [{
+                    label: 'ECG Signal', 
+                    data: [],
+                    backgroundColor: 'rgba(139, 0, 0, 0.2)', 
+                    borderColor: 'rgba(139, 0, 0, 1)',
+                    pointRadius: 0,
+                    hoverRadius: 0,
+                    hoverBackgroundColor: 'transparent',
+                    hoverBorderColor: 'transparent',
+                    hoverBorderWidth: 0
+                }]
+            },
+            options: {
+                scales: {
+                    y: {
+                        ticks: {
+                            font: {
+                                size: 20 // this changes the y-axis label size
+                            }
+                        }
+                    },
+                    x: {
+                        display: false //this will remove all the x-axis grid lines
+                    }
+                },
+                interaction: {
+                    intersect: false,
+                    mode: 'nearest'
+                },
+                plugins: {
+                    tooltip: {
+                        enabled: false
+                    },
+                    legend: {
+                        labels: {
+                            font: {
+                                size: 20 // this changes the legend label size
+                            }
+                        }
+                    }
+                },
+                animation: {
+                    duration: 0 // general animation time
+                },
+                hover: {
+                    animationDuration: 0 // duration of animations when hovering an item
+                },
+                responsiveAnimationDuration: 0, // animation duration after a resize
+                elements: {
+                    line: {
+                        tension: 0 // disables bezier curves
+                    }
+                }
+            }
+        });
+
+        async function fetchData() {
+            const response = await fetch('/data');
+            const data = await response.json();
+
+            console.log(data);
+
+            for (var i = 0; i < data.length; i++) {
+                ECG_SIGNAL.data.labels.push('');
+                ECG_SIGNAL.data.datasets[0].data.push(data[i]);
+            }
+
+            while (ECG_SIGNAL.data.labels.length > 1800) {
+                ECG_SIGNAL.data.labels = ECG_SIGNAL.data.labels.slice(180); // remove first 180 datapoints
+                ECG_SIGNAL.data.datasets[0].data = ECG_SIGNAL.data.datasets[0].data.slice(180); // remove first 180 datapoints
+            }
+
+            ECG_SIGNAL.update();
+
+            const responseAnalysis = await fetch('/heartPrediction');
+            const analysis = await responseAnalysis.text();
+            document.getElementById('analysis').innerHTML = `<b>Heart Status:</b> ${analysis}`;
+
+            setTimeout(fetchData, 2.7777 * 180); // delay before next fetch
+        }
+
+        fetchData();
+    </script>
+</body>
+</html>
